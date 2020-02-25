@@ -1,3 +1,6 @@
+/// @file RinSum.cpp
+/// Read Rinex observation files (version 2 or 3) and output a summary of the content.
+
 //============================================================================
 //
 //  This file is part of GPSTk, the GPS Toolkit.
@@ -34,9 +37,6 @@
 //
 //=============================================================================
 
-/// @file RinSum.cpp
-/// Read Rinex observation files (version 2 or 3) and output a summary of the content.
-
 // system
 #include <string>
 #include <vector>
@@ -52,6 +52,7 @@
 
 #include "singleton.hpp"
 #include "expandtilde.hpp"
+#include "stl_helpers.hpp"
 #include "logstream.hpp"
 #include "CommandLine.hpp"
 
@@ -67,13 +68,15 @@
 #include "Rinex3ObsData.hpp"
 #include "RinexUtilities.hpp"
 
+#include "msecHandler.hpp"
+
 //------------------------------------------------------------------------------------
 using namespace std;
 using namespace gpstk;
 using namespace StringUtils;
 
 //------------------------------------------------------------------------------------
-string Version(string("2.2 10/31/13"));
+string Version(string("4.1 8/26/15"));
 
 //------------------------------------------------------------------------------------
 // Object for command line input and global data
@@ -106,9 +109,10 @@ private:
       beginTime.setTimeSystem(TimeSystem::Any);
       endTime.setTimeSystem(TimeSystem::Any);
       userfmt = gpsfmt;
-      help = verbose = brief = nohead = notab = gpstime = sorttime = vistab = false;
+      help = verbose = brief = nohead = notab = gpstime = sorttime = vistab
+         = dogaps = doms = false;
       debug = -1;
-      gapdt = 0.0;
+      dt = -1.0;
       vres = 0;
    }  // end Configuration::SetDefaults()
 
@@ -120,9 +124,9 @@ public:
    string Title;                 // id line printed to screen and log
 
    // start command line input
-   bool help, verbose, brief, nohead, notab, gpstime, sorttime, vistab;
+   bool help, verbose, brief, nohead, notab, gpstime, sorttime, dogaps, doms, vistab;
    int debug, vres;
-   double gapdt;
+   double dt;
    string cfgfile, userfmt;
 
    vector<string> InputObsFiles; // RINEX obs file names
@@ -142,6 +146,9 @@ public:
    string msg;
    static const string calfmt,gpsfmt,longfmt;
    ofstream logstrm;
+
+   // for milliseconds
+   msecHandler msh;
 
 }; // end class Configuration
 
@@ -266,6 +273,9 @@ try {
          LOG(ERROR) << C.msg;
    }
 
+   // initialize millisecond handler
+   if(C.doms) C.msh.setDT(C.dt);
+
    // -------- save errors and output
    //errors = oss.str();
    //stripTrailing(errors,'\n');
@@ -280,7 +290,6 @@ catch(Exception& e) { GPSTK_RETHROW(e); }
 //------------------------------------------------------------------------------------
 int Configuration::ProcessUserInput(int argc, char **argv) throw()
 {
-   int i;
    string PrgmDesc,cmdlineUsage, cmdlineErrors, cmdlineExtras;
    vector<string> cmdlineUnrecognized;
 
@@ -309,7 +318,7 @@ int Configuration::ProcessUserInput(int argc, char **argv) throw()
 
    // pull out file name without --obs
    if(cmdlineUnrecognized.size() > 0) {
-      for(i=cmdlineUnrecognized.size()-1; i >= 0; i--) {
+      for(int i=cmdlineUnrecognized.size()-1; i >= 0; i--) {
          try {
             string filename(cmdlineUnrecognized[i]);
             ifstream ifstrm(filename.c_str());
@@ -338,8 +347,8 @@ int Configuration::ProcessUserInput(int argc, char **argv) throw()
    // output warning / error messages
    if(cmdlineUnrecognized.size() > 0) {
       LOG(WARNING) << "Warning - unrecognized arguments:";
-      for(size_t i=0; i<cmdlineUnrecognized.size(); i++)
-         LOG(WARNING) << "  " << cmdlineUnrecognized[i];
+      for(size_t j=0; j<cmdlineUnrecognized.size(); j++)
+         LOG(WARNING) << "  " << cmdlineUnrecognized[j];
       LOG(WARNING) << "End of unrecognized arguments";
    }
 
@@ -375,10 +384,9 @@ int Configuration::ProcessUserInput(int argc, char **argv) throw()
 string Configuration::BuildCommandLine(void) throw()
 {
    // Program description will appear at the top of the syntax page
-   string PrgmDesc = " Program " + PrgmName +
-" reads one or more RINEX (v.2+) observation files and prints a summary of content.\n"
-" Usage: " + PrgmName + " [options] [<file>]\n"
-" Options:";
+   string PrgmDesc = " Program " + PrgmName + " reads one or more RINEX (v.2+) "
+               + "observation files and prints a summary of content.\n Options:";
+   opts.DefineUsageString("RinSum <file> [options]");
 
    // options to appear on the syntax page, and to be accepted on command line
    //opts.Add(char, opt, arg, repeat?, required?, &target, pre-desc, desc);
@@ -415,8 +423,12 @@ string Configuration::BuildCommandLine(void) throw()
             "Omit header from output");
    opts.Add(0, "notable", "", false, false, &notab, "",
             "Omit sat/obs table from output");
-   opts.Add(0, "gaps", "dt", false, false, &gapdt, "",
-            "Print a table of sat vs. data gaps, assuming data interval <dt> sec");
+   opts.Add(0, "dt", "sec", false, false, &dt, "",
+            "Nominal time step of data (sec); required only for gaps and millisec");
+   opts.Add(0, "milli", "", false, false, &doms, "",
+            "Find millisecond clock adjusts; req's --dt");
+   opts.Add(0, "gaps", "", false, false, &dogaps, "",
+            "Print a table of gaps in the data; req's --dt");
    opts.Add(0, "vis", "n", false, false, &vres, "",
             "Print graphical visibility, resolution <n> [n~20 @ 30s; req's --gaps]");
    opts.Add(0, "vtab", "", false, false, &vistab, "",
@@ -518,16 +530,26 @@ int Configuration::ExtraProcessing(string& errors, string& extras) throw()
       ossx << "Warning - Option --vis, must have n positive\n";
       vres = 0;
    }
-   if(gapdt < 0.0) {
-      ossx << "Warning - Option --gaps, must have dt positive\n";
-      gapdt = 0.0;
+   if(dt < 0.0 && dt != -1.0) {
+      ossx << "Warning - Option --dt, must have dt positive\n";
+      dt = -1.0;
    }
-   // vres requires gapdt
-   if(vres > 0 && gapdt == 0.0) {
-      ossx << "Warning - Option --vis <n> requires that --gaps <dt> be given\n";
+   // milli requires dt
+   if(doms && dt == -1.0) {
+      ossx << "Warning - Option --milli requires --dt be given\n";
+      doms = false;
+   }
+   // gaps requires dt
+   if(dogaps && dt == -1.0) {
+      ossx << "Warning - Option --gaps requires --dt be given\n";
+      dogaps = false;
+   }
+   // vres requires dt and gaps
+   if(vres > 0 && (dt == -1.0 || !dogaps)) {
+      ossx << "Warning - Option --vis <n> requires --gaps and --dt be given\n";
       vres = 0;
    }
-   else if(vistab && vres == 0) {
+   if(vistab && vres == 0) {
       ossx << "Warning - Option --vtab requires that --vis <n> be given\n";
       vistab = false;
    }
@@ -548,21 +570,30 @@ int ProcessFiles(void) throw(Exception)
 {
 try {
    Configuration& C(Configuration::Instance());
-   int iret,nfiles;
-   size_t i,k, j, nfile;
+   int iret,ii,k;
+   size_t i,j,nfile,nfiles;
    string tag;
    CommonTime lastObsTime, prevObsTime, firstObsTime;
    RinexSatID sat;
    Rinex3ObsStream ostrm;
    ostringstream oss;
+   // estimate time step
    const size_t ndtmax=15;
    double dt, bestdt[ndtmax];
    int ndt[ndtmax];
+   // cache the out-of-time-order records
+   bool cacheon;
+   vector<CommonTime> cachetime;
+   vector<vector<Rinex3ObsData> > cache;
 
    for(nfiles=0,nfile=0; nfile<C.InputObsFiles.size(); nfile++) {
       Rinex3ObsStream istrm;
       Rinex3ObsHeader Rhead, Rheadout;
       Rinex3ObsData Rdata;
+
+      cacheon = false;
+      cache.clear(); cachetime.clear();
+
       string filename(C.InputObsFiles[nfile]);
 
       // iret is set to 0 ok, or could not: 1 open file, 2 read header, 3 read data
@@ -597,6 +628,8 @@ try {
          iret = 2;
          continue;
       }
+      if(Rhead.lastObs.getTimeSystem() != Rhead.firstObs.getTimeSystem())
+         Rhead.lastObs.setTimeSystem(Rhead.firstObs.getTimeSystem());
 
       // output file name and header
       if(C.brief) {
@@ -643,6 +676,43 @@ try {
          if(int((sit->second).size()) > nmaxobs) nmaxobs = (sit->second).size();
       }
 
+      // initialize millisecond handler with obstypes and wavelengths
+      vector<string> msots;
+      if(C.doms) {
+         vector<double> waves;
+         // get obs types from header
+         for(sit=Rhead.mapObsTypes.begin(); sit != Rhead.mapObsTypes.end(); ++sit) {
+            // get the system
+            RinexSatID rsid;
+            rsid.fromString(sit->first);
+            SatID sid(rsid);
+            // TD support only GPS currently
+            if(rsid.systemChar() != 'G') continue;
+            // excluded satellites/systems
+            if(find(C.exSats.begin(), C.exSats.end(), rsid) != C.exSats.end())
+               continue;
+            // get the obstypes, prepend the system character
+            for(i=0; i<sit->second.size(); i++) {
+               tag = sit->second[i].asString();       // 3-char obs type
+               if(tag[0] == 'C' || tag[0] == 'L') {   // code and phase only
+                  msots.push_back(string(1,rsid.systemChar())+tag);
+                  // get wavelength ... NB TD Glonass frequency channel not supported
+                  if(tag[0] == 'L') {
+                     ii = asInt(string(1,tag[1]));
+                     waves.push_back(getWavelength(sid, ii));
+                  }
+                  else 
+                     waves.push_back(0.0);
+               }
+            }
+         }
+
+         C.msh.setObstypes(msots,waves);
+         LOG(DEBUG) << "Initialize millisecond handler with obs type, wavelength:";
+         for(i=0; i<msots.size(); i++) LOG(DEBUG) << " " << msots[i]
+               << fixed << setprecision(6) << " " << waves[i];
+      }
+
       if(pLOGstrm == &cout && !C.brief)
          LOG(INFO) << "\nReading the observation data...";
 
@@ -657,7 +727,7 @@ try {
             iret = 3;
             break;
          }
-         catch(exception& e) {
+         catch(std::exception& e) {
             Exception ge(string("Std excep: ") + e.what());
             GPSTK_THROW(ge);
          }
@@ -681,11 +751,19 @@ try {
             break;
          }
 
-         lastObsTime = Rdata.time;
-         lastObsTime.setTimeSystem(Rhead.firstObs.getTimeSystem());
-         if(firstObsTime == CommonTime::BEGINNING_OF_TIME) {
-            firstObsTime = lastObsTime;
+         // fix time systems
+         if(nepochs == 0 &&
+            Rdata.time.getTimeSystem() != Rhead.lastObs.getTimeSystem())
+         {
+            Rhead.lastObs.setTimeSystem(Rdata.time.getTimeSystem());
+            Rhead.firstObs.setTimeSystem(Rdata.time.getTimeSystem());
          }
+         lastObsTime = Rdata.time;
+         lastObsTime.setTimeSystem(Rhead.lastObs.getTimeSystem());
+         firstObsTime.setTimeSystem(Rhead.lastObs.getTimeSystem());
+         prevObsTime.setTimeSystem(Rhead.lastObs.getTimeSystem());
+         if(firstObsTime == CommonTime::BEGINNING_OF_TIME)
+            firstObsTime = lastObsTime;
 
          //LOG(INFO) << "";
          LOG(DEBUG) << " Read RINEX data: flag " << Rdata.epochFlag
@@ -705,10 +783,27 @@ try {
          // count this epoch
          nepochs++;
 
+         // check for data out of time order
+         // use < 1.e-3 not < 0 b/c inline header info (epochFlag > 1) excluded
+         if(prevObsTime != CommonTime::BEGINNING_OF_TIME
+                            && Rdata.time-prevObsTime < 1.e-3)
+         {
+            // save it
+            if(!cacheon) {          // new block
+               cachetime.push_back(prevObsTime);
+               cacheon = true;
+               vector<Rinex3ObsData> v;
+               cache.push_back(v);
+            }
+            cache[cache.size()-1].push_back(Rdata);
+            continue;
+         }
+         cacheon = false;
+
          // look for gaps in the timetags
          int ncount;
-         if(C.gapdt > 0.0) {
-            ncount = int(0.5+(lastObsTime-firstObsTime)/C.gapdt);
+         if(C.dt > 0.0) {
+            ncount = int(0.5+(lastObsTime-firstObsTime)/C.dt);
             // update gap count
             if(C.gapcount.size() == 0) {       // create the list
                C.gapcount.push_back(ncount);   // start time
@@ -722,7 +817,7 @@ try {
                C.gapcount.push_back(ncount);   // end time
             }
 
-            // TD test after 50 epochs - wrong gapdt is disasterous
+            // TD test after 50 epochs - wrong dt is disasterous
          }
 
          // loop over satellites -------------------------------------
@@ -754,14 +849,14 @@ try {
                table.push_back(TableData(sat,nmaxobs));
                ptab = find(table.begin(),table.end(),TableData(sat,nmaxobs));
                ptab->begin = lastObsTime;
-               if(C.gapdt > 0.0) {
+               if(C.dt > 0.0) {
                   ptab->gapcount.push_back(ncount);      // start time
                   ptab->gapcount.push_back(ncount-1);    // end time
                }
             }
 
             // update list of gap times
-            if(C.gapdt > 0.0) {
+            if(C.dt > 0.0) {
                i = ptab->gapcount.size() - 1;         // index of curr end time
                if(ncount == ptab->gapcount[i] + 1)    // no gap
                   ptab->gapcount[i] = ncount;
@@ -795,6 +890,14 @@ try {
                   totals[sysCode][index]++;              // per system
                }
 
+               // if looking for milliseconds, update handler
+               if(C.doms && vecData[index].data != 0) {
+                  tag = sysStr + Rhead.mapObsTypes[sysStr][index].asString();
+                  if(vectorindex(msots,tag) != -1) {
+                     C.msh.add(lastObsTime, sat, tag, vecData[index].data);
+                  }
+               }
+
                if(C.debug > -1) oss << fixed << setprecision(3)
                   << " " << asString(Rhead.mapObsTypes[sysStr][index])
                   << " " << setw(13) << vecData[index].data
@@ -802,6 +905,7 @@ try {
                   << " " << vecData[index].ssi;
 
             } // end loop over observations
+
             if(C.debug > -1) LOG(DEBUG) << oss.str();
 
          }  // end loop over satellites
@@ -887,6 +991,7 @@ try {
       LOG(INFO) << "Computed file size: " << filesize << " bytes.";
 
       // Reusing secs, as it is equivalent to the original expression
+      // i = 1+int(0.5+(lastObsTime-firstObsTime)/dt);
       i = 1+int(0.5 + secs / dt);
 
       LOG(INFO) << "There were " << nepochs << " epochs ("
@@ -992,6 +1097,8 @@ try {
             for(i=0; i<vec.size(); i++) oss << " " << vec[i].asString();
 
             // if RINEX ver. 2, then add ver 2 obstypes in parentheses
+            //map<string, map<string, RinexObsID> > Rinex3ObsHeader::mapSysR2toR3ObsID
+            //Rhead.mapSysR2toR3ObsID[sys][ot2] = OT3;
             if(Rhead.version < 3) {
                oss << " [v2:";
                for(i=0; i<vec.size(); i++) {
@@ -1012,45 +1119,37 @@ try {
       }
 
       // gaps
-      if(C.gapdt > 0.0) {
+      if(C.dogaps) {
          // summary of gaps using count
          oss.str("");
-         oss << "\nSummary of gaps in the data in this file, assuming dt = "
-            << C.gapdt << " sec.\n";
-         if(C.gapdt != dt) oss << " WARNING - computed dt does not match input dt\n";
+         oss << "Summary of gaps (vs count) in the data in this file, "
+            << "assuming dt = " << C.dt << " sec.\n";
+         if(C.dt != dt) oss << " Warning - computed dt does not match input dt\n";
          oss << " First epoch = " << printTime(firstObsTime,C.longfmt)
             << " and last epoch = " << printTime(lastObsTime,C.longfmt) << endl;
          oss << "    Sat    beg - end (count,size) ... "
             << "[count = # of dt's from first epoch]\n";
-
          // print for timetags = all sats
          k = C.gapcount.size()-1;               // size() is at least 2
          oss << "GAP ALL " << setw(5) << C.gapcount[0]
             << " - " << setw(5) << C.gapcount[k];
-         for(i=1; i<=k-2; i+=2) oss << " (" << C.gapcount[i]+1    // begin of gap
-            << "," << C.gapcount[i+1]-C.gapcount[i]-1 << ")";     // size
-         oss << endl;
 
-         //oss << "DUMP ";
-         //for(i=0; i<C.gapcount.size(); i++) oss << " " << C.gapcount[i]
-         //         << "(" << int(C.gapcount[i]/double(C.vres)) << ")";
-         //oss << "\n";
+         // NB DO NOT make ii size_t
+         for(ii=1; ii<=k-2; ii+=2)
+            oss << " (" << C.gapcount[ii]+1                          // begin of gap
+               << "," << C.gapcount[ii+1]-C.gapcount[ii]-1 << ")";   // size
+         oss << endl;
 
          // loop over sats
          for(tabIt = table.begin(); tabIt != table.end(); ++tabIt) {
             k = tabIt->gapcount.size() - 1;
             oss << "GAP " << tabIt->sat << " " << setw(5) << tabIt->gapcount[0]
                << " - " << setw(5) << tabIt->gapcount[k];
-            for(i=1; i<=k-2; i+=2)
-               oss << " (" << tabIt->gapcount[i]+1             // begin count of gap
-                  << "," << tabIt->gapcount[i+1]-tabIt->gapcount[i]-1 << ")"; // size
+            // NB DO NOT make ii size_t
+            for(ii=1; ii<=k-2; ii+=2)
+               oss << " (" << tabIt->gapcount[ii]+1 << ","      // begin count of gap
+                  << tabIt->gapcount[ii+1]-tabIt->gapcount[ii]-1 << ")";   // size
             oss << endl;
-
-            //oss << "DUMP ";
-            //for(i=0; i<tabIt->gapcount.size();i++)
-            //   oss << " " << tabIt->gapcount[i]
-            //      << "(" << int(tabIt->gapcount[i]/double(C.vres)) << ")";
-            //oss << "\n";
          }
 
          tag = oss.str(); stripTrailing(tag,"\n");
@@ -1058,10 +1157,10 @@ try {
 
          // summary of gaps using sow
          oss.str("");
-         double t(static_cast<GPSWeekSecond>(firstObsTime).sow), d(C.gapdt);
-         oss << "\nSummary of gaps in the data in this file, assuming dt = "
-            << C.gapdt << " sec.\n";
-         if(C.gapdt != dt) oss << " WARNING - computed dt does not match input dt\n";
+         double t(static_cast<GPSWeekSecond>(firstObsTime).sow), d(C.dt);
+         oss << "\nSummary of gaps (vs SOW) in the data in this file, assuming dt = "
+            << C.dt << " sec.\n";
+         if(C.dt != dt) oss << " Warning - computed dt does not match input dt\n";
          oss << " First epoch = " << printTime(firstObsTime,C.longfmt)
             << " and last epoch = " << printTime(lastObsTime,C.longfmt) << endl;
          oss << "    Sat      beg -      end (sow,number of missing points)\n";
@@ -1070,8 +1169,10 @@ try {
          k = C.gapcount.size()-1;               // size() is at least 2
          oss << "GAP ALL " << fixed << setprecision(1) << setw(8) << t+d*C.gapcount[0]
             << " - " << setw(8) << t+d*C.gapcount[k];
-         for(i=1; i<=k-2; i+=2) oss << " (" << t+d*(C.gapcount[i]+1)// begin of gap
-            << "," << C.gapcount[i+1]-C.gapcount[i]-1 << ")";     // size
+         // NB DO NOT make ii size_t
+         for(ii=1; ii<=k-2; ii+=2)
+            oss << " (" << t+d*(C.gapcount[ii]+1)                    // begin of gap
+               << "," << C.gapcount[ii+1]-C.gapcount[ii]-1 << ")";   // size
          oss << endl;
 
          // loop over sats
@@ -1080,9 +1181,10 @@ try {
             oss << "GAP " << tabIt->sat << " " << fixed << setprecision(1)
                << setw(8) << t+d*tabIt->gapcount[0]
                << " - " << setw(8) << t+d*tabIt->gapcount[k];
-            for(i=1; i<=k-2; i+=2)
-               oss << " (" << t+d*(tabIt->gapcount[i]+1)        // begin sow of gap
-                  << "," << tabIt->gapcount[i+1]-tabIt->gapcount[i]-1 << ")"; // size
+            // NB DO NOT make ii size_t
+            for(ii=1; ii<=k-2; ii+=2)
+               oss << " (" << t+d*(tabIt->gapcount[ii]+1) << ","  // begin sow of gap
+                  << tabIt->gapcount[ii+1]-tabIt->gapcount[ii]-1 << ")";   // size
             oss << endl;
          }
 
@@ -1092,22 +1194,22 @@ try {
          // visibility
          if(C.vres > 0) {
             // print visibility graphically, resolution C.vres = counts/character
-            double dn(C.vres);
+            double dn(static_cast<double>(C.vres));
             oss.str("");
-            oss << "\nVisibility - resolution is " << dn << " epochs = " << dn*C.gapdt
+            oss << "\nVisibility - resolution is " << dn << " epochs = " << dn*C.dt
                << " seconds.\n";
             oss << " First epoch = " << printTime(firstObsTime,C.longfmt)
                << " and last epoch = " << printTime(lastObsTime,C.longfmt) << endl;
             oss << "VIS ALL ";
             bool isOn(false);
             for(k=0,i=0; i<C.gapcount.size()-1; i+=2) {
-               j = int(double(C.gapcount[i]/dn));
-               if(j-k > 0) { oss << string(j-k,' '); k = j; isOn = false; }
-               j = int(double(C.gapcount[i+1]/dn));
-               if(j-k > 0) {
-                  if(isOn) { oss << "x"; j--; }
-                  oss << string(j-k,'X');
-                  k = j;
+               ii = int(double(C.gapcount[i]/dn));
+               if(ii-k > 0) { oss << string(ii-k,' '); k = ii; isOn = false; }
+               ii = int(double(C.gapcount[i+1]/dn));
+               if(ii-k > 0) {
+                  if(isOn) { oss << "x"; ii--; }
+                  oss << string(ii-k,'X');
+                  k = ii;
                   isOn = true;
                }
             }
@@ -1120,20 +1222,18 @@ try {
             // loop over sats
             //ostringstream ossvt;
             for(tabIt = table.begin(); tabIt != table.end(); ++tabIt) {
-               //ossvt.str("");
                oss.str("");
                oss << "VIS " << tabIt->sat << " ";
 
                isOn = false;
                bool first(true);
-               int jj,kk(double(tabIt->gapcount[0]/dn)); // + 0.5);
+               int jj,kk(static_cast<int>(tabIt->gapcount[0]/dn)); // + 0.5);
                for(k=0,i=0; i<tabIt->gapcount.size()-1; i+=2) {
                   // satellite 'off'
                   j = int(double(tabIt->gapcount[i]/dn));
                   if(!first) {
                      vtab.insert(multimap<int, string>::value_type(
                            kk, string("-")+asString(tabIt->sat)));
-                     //ossvt << " " << kk << "-,";
                      kk = j;
                   }
                   first = false;
@@ -1147,7 +1247,6 @@ try {
                   j = int(double(tabIt->gapcount[i+1]/dn));
                   vtab.insert(multimap<int, string>::value_type(
                         kk, string("+")+asString(tabIt->sat)));
-                  //ossvt << " " << kk << "+,";
                   kk = j;
                   jj = j-k;
                   if(jj > 0) {
@@ -1159,14 +1258,12 @@ try {
                }
                vtab.insert(multimap<int, string>::value_type(
                      kk, string("-")+asString(tabIt->sat)));
-               //oss << "-" << kk;
                LOG(INFO) << oss.str();
-               //LOG(INFO) << ossvt.str() << " " << kk << "-";
             }
 
             if(C.vistab) {
                LOG(INFO) << "\n Visibility Timetable - resolution is "
-                  << dn << " epochs = " << dn*C.gapdt << " seconds.\n"
+                  << dn << " epochs = " << dn*C.dt << " seconds.\n"
                   << " First epoch = " << printTime(firstObsTime,C.longfmt)
                   << " and last epoch = " << printTime(lastObsTime,C.longfmt) << "\n"
                   << "     YYYY/MM/DD HH:MM:SS = week d secs-of-wk Xtot count  nX  "
@@ -1188,14 +1285,12 @@ try {
                         fsat = find(sats.begin(),sats.end(),str.substr(1));
                         if(fsat != sats.end()) {
                            sats.erase(fsat);
-                         //  LOG(INFO) << "Del " << str.substr(1);
                         }
-                        //else LOG(INFO) << "Did not find " << str.substr(1) << "!!";
                      }
                      ++vt;
                   }
 
-                  ttag += (k-j)*C.gapdt*dn;
+                  ttag += (k-j)*C.dt*dn;
 
                   if(vt == vtab.end()) break;
 
@@ -1207,7 +1302,7 @@ try {
                      << " " << setw(5) << k*C.vres
                      << " " << setw(3) << vt->first - k
                      << fixed << setprecision(1)
-                     << " " << setw(8) << (vt->first-k)*C.gapdt*dn
+                     << " " << setw(8) << (vt->first-k)*C.dt*dn
                      << " " << setw(5) << sats.size();
                   for(i=0; i<sats.size(); i++) oss << " " << sats[i];
                   LOG(INFO) << oss.str();
@@ -1217,14 +1312,38 @@ try {
                }
                LOG(INFO) << "VTAB " << setw(4) << printTime(ttag,C.longfmt)
                   << " " << setw(4) << k
-                  << " " << setw(5) << int(0.5+(ttag-firstObsTime)/C.gapdt)
+                  << " " << setw(5) << int(0.5+(ttag-firstObsTime)/C.dt)
                   << " END";
             }
 
          }  // end if C.vres > 0 (user chose vis output)
       }
 
-      // Warnings
+      // output milliseconds
+      if(C.doms) {
+         C.msh.afterAddbeforeFix();
+
+         // true b/c no fixing, but false b/c editing commands follow
+         LOG(INFO) << C.msh.getFindMessage(false);
+
+         vector<string> cmds = C.msh.getEditCommands();
+         for(i=0; i<cmds.size(); i++)
+            LOG(INFO) << cmds[i] << " # edit cmd for millisecond clock adjust";
+         LOG(INFO) << "";
+      }
+
+      // Warnings ------------------------------------------------------------
+      // there were records out of time order
+      if(cache.size() > 0) {
+         for(i=0; i<cache.size(); i++)
+            LOG(INFO) << " Warning: " << setw(4) << cache[i].size()
+               << " data records following epoch "
+               << printTime(cachetime[i],C.calfmt) << " are out of time order,"
+               << "\n         with epochs " << printTime(cache[i][0].time,C.calfmt)
+               << " to " << printTime(cache[i][cache[i].size()-1].time,C.calfmt)
+               << endl;
+      }
+
       if((Rhead.valid & Rinex3ObsHeader::validInterval)
                                           && fabs(dt-Rhead.interval) > 1.e-3)
          LOG(INFO) << " Warning - Computed interval is " << setprecision(2)
@@ -1278,14 +1397,15 @@ try {
             if(totvec[k] == 0) {
                tag = string();
                if(Rhead.version < 3) {
-                  RinexObsID obsid(sit->first+asString((sit->second)[k]));
                   map<string,RinexObsID>::iterator it;
                   for(it = Rhead.mapSysR2toR3ObsID[sit->first].begin();
                       it != Rhead.mapSysR2toR3ObsID[sit->first].end(); ++it)
-                     if(it->second == obsid) {
+                  {
+                     if(it->second == sit->second[k]) {
                         tag = string(", ") + it->first + string(" in ver.2");
                         break;
                      }
+                  }
                }
                LOG(INFO) << " Warning - Obs type "
                   << sit->first << asString((sit->second)[k])
@@ -1308,3 +1428,7 @@ try {
 }
 catch(Exception& e) { GPSTK_RETHROW(e); }
 }  // end ProcessFiles()
+
+//------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------

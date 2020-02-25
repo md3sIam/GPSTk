@@ -152,7 +152,8 @@ namespace gpstk
          { 1999,  1, 32 },
          { 2006,  1, 33 },
          { 2009,  1, 34 },
-         { 2012,  7, 35 }, // leave the last comma!
+         { 2012,  7, 35 },
+         { 2015,  7, 36 }, // leave the last comma!
          // add new entry here, of the form:
          // { year, month(1-12), leap_sec }, // leave the last comma!
       };
@@ -177,8 +178,8 @@ namespace gpstk
 
             // found last record with < rec.year >= year and rec.month >= month
             // watch out - cannot use CommonTime here
-            int iday(day);
-            double dday(iday-int(day));
+            int iday(static_cast<int>(day));
+            double dday(static_cast<double>(iday-int(day)));
             if(iday == 0) { iday = 1; dday = 1.0-dday; }
             long JD0 = convertCalendarToJD(year,month,iday);
             long JD = convertCalendarToJD(preleap[i].year,preleap[i].month,1);

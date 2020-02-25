@@ -37,6 +37,7 @@
 #include "BinUtils.hpp"
 #include "Exception.hpp"
 #include <iostream>
+#include <cmath>
 
 class BinUtils_T
 {
@@ -189,9 +190,9 @@ class BinUtils_T
 		testFramework.assert(b1 == b, failMesg, __LINE__);
 		testFramework.assert(c1 == c, failMesg, __LINE__);
 		testFramework.assert(d1 == d, failMesg, __LINE__);
-		testFramework.assert(abs(e1-e) < 1e-50, failMesg, __LINE__);
-		testFramework.assert(abs(f1-f) < 1e-50, failMesg, __LINE__);
-		testFramework.assert(abs(g1-g) < 1e-50, failMesg, __LINE__);
+		testFramework.assert(std::abs(e1-e) < 1e-50, failMesg, __LINE__);
+		testFramework.assert(std::abs(f1-f) < 1e-50, failMesg, __LINE__);
+		testFramework.assert(std::abs(g1-g) < 1e-50, failMesg, __LINE__);
 
 		gpstk::BinUtils::twiddle(a);
 		gpstk::BinUtils::twiddle(b);
@@ -215,9 +216,9 @@ class BinUtils_T
 		testFramework.assert(b1 == b, failMesg, __LINE__);
 		testFramework.assert(c1 == c, failMesg, __LINE__);
 		testFramework.assert(d1 == d, failMesg, __LINE__);
-		testFramework.assert(abs(e1-e) < 1e-50, failMesg, __LINE__);
-		testFramework.assert(abs(f1-f) < 1e-50, failMesg, __LINE__);
-		testFramework.assert(abs(g1-g) < 1e-50, failMesg, __LINE__);		
+		testFramework.assert(std::abs(e1-e) < 1e-50, failMesg, __LINE__);
+		testFramework.assert(std::abs(f1-f) < 1e-50, failMesg, __LINE__);
+		testFramework.assert(std::abs(g1-g) < 1e-50, failMesg, __LINE__);		
 
 		return testFramework.countFails();
 	}
@@ -246,20 +247,23 @@ class BinUtils_T
 		testFramework.assert(stringTest == "andom", failMesg, __LINE__);
 
 		std::string stringTest0 = "Random";
-		char out0 = gpstk::BinUtils::decodeVar<char>(stringTest0,0);
+		char out0 = gpstk::BinUtils::decodeVar<char>(stringTest0, 0);
 
 		failMesg = "The method did not parse the proper value";
 		testFramework.assert(out0 == 0x52, failMesg, __LINE__);
 
 		std::string stringTest1 = "I am 5000.";
-		int out1 = gpstk::BinUtils::decodeVar<int>(stringTest1,5);
+		int out1 = gpstk::BinUtils::decodeVar<int>(stringTest1, 5);
 
-		testFramework.assert(out1 == 0x35303030, failMesg, __LINE__); // '5000'
+		unsigned iexpected = 0x35303030;  // '5000' as ascii bytes
+		testFramework.assert(out1 == iexpected, failMesg, __LINE__); // '5000'
 
 		std::string stringTest2 = "The word 'this' should be read";
 		float out2 = gpstk::BinUtils::decodeVar<float>(stringTest2, 10);
 
-		testFramework.assert(abs(out2 - 0x74686973) < 1e-12, failMesg, __LINE__); // 'this'
+		unsigned bytes = 0x74686973;  // 'this' as ascii bytes
+		float fexpected = *(float*)&bytes;  // interpret bytes as a float
+		testFramework.assert(std::abs(out2 - fexpected) < 1e-12, failMesg, __LINE__);
 
 		return testFramework.countFails();
 	}

@@ -8,41 +8,27 @@
 
 cmake_minimum_required( VERSION 2.8.5 )
 
-project( gpstk )
-set( "${PROJECT_NAME}_VERSION_MAJOR" "2" )
-set( "${PROJECT_NAME}_VERSION_MINOR" "6" )
-set( "${PROJECT_NAME}_VERSION_PATCH" "0" )
+project( GPSTK )
+set( GPSTK_VERSION_MAJOR "2" )
+set( GPSTK_VERSION_MINOR "7" )
+set( GPSTK_VERSION_PATCH "0" )
+set( GPSTK_VERSION "${GPSTK_VERSION_MAJOR}.${GPSTK_VERSION_MINOR}.${GPSTK_VERSION_PATCH}" )
 
 #============================================================
 # Set up
 #============================================================
 
-#----------------------------------------
-# Determine Installation Path Prefix
-#     Path to which we will install the
-#     gpstk /lib, /bin, and /include dirs.
-#----------------------------------------
-
-if( DEFINED CMAKE_INSTALL_PREFIX )
-    message( STATUS "CMAKE_INSTALL_PREFIX was defined by user with the cmake command line. CMAKE_INSTALL_PREFIX = ${CMAKE_INSTALL_PREFIX}" )
-elseif( DEFINED ENV{gpstk} )
-    set( CMAKE_INSTALL_PREFIX $ENV{gpstk} )
-    message( STATUS "CMAKE_INSTALL_PREFIX was defined the environment variable ENV{gpstk}. CMAKE_INSTALL_PREFIX = ${CMAKE_INSTALL_PREFIX} " )
-else()
-    message( STATUS "CMAKE_INSTALL_PREFIX was not defined by any supported method." )
-	message( STATUS "Either set an environment variable ENV{gpstk} or pass in a cmake variable as -DCMAKE_INSTALL_PREFIX")
-    message( FATAL_ERROR "CMAKE_INSTALL_PREFIX must be set by the user. Exitting now!" )
-    return()
-endif()
-
+# This sets up veriables contining GNU standard installation locations.
 include( GNUInstallDirs )
-# For now, overrride to use 'lib' for the library install dir.
-set ( CMAKE_INSTALL_LIBDIR lib )
+
+# For now, override to use 'lib' for the library install dir.
+set( CMAKE_INSTALL_LIBDIR lib )
+
+# Set a filename for collecting exported targets.
+set( EXPORT_TARGETS_FILENAME "GPSTKTargets" )
 
 #----------------------------------------
 # Option Switches
-#
-# Usage: option( <option_variable> "help string" [initial value] )
 #----------------------------------------
 
 option( DEBUG_SWITCH "HELP: DEBUG_SWITCH: Default = OFF, print some CMake variable values to stdout." OFF )
@@ -50,6 +36,12 @@ option( DEBUG_VERBOSE "HELP: DEBUG_VERBOSE: Default = OFF, print all CMake varia
 option( BUILD_EXT "HELP: BUILD_EXT: SWITCH, Default = OFF, Build the ext library, in addition to the core library." OFF )
 option( TEST_SWITCH "HELP: TEST_SWITCH: SWITCH, Default = OFF, Turn on test mode." OFF )
 option( BUILD_PYTHON "HELP: BUILD_PYTHON: SWITCH, Default = OFF, Turn on processing of python extension package." OFF )
+
+if( BUILD_PYTHON AND !BUILD_EXT )
+    message( WARNING "Combination of BUILD_PYTHON=ON and BUILD_EXT=OFF is not allowed. Python swig bindings depend on gpstk/ext." )
+    message( WARNING "Setting BUILD_EXT = TRUE" )
+    set( BUILD_EXT TRUE )
+endif()
 
 #----------------------------------------
 # Pull in Build Config
@@ -139,30 +131,18 @@ endif()
 add_library( gpstk ${STADYN} ${GPSTK_SRC_FILES} ${GPSTK_INC_FILES} )
 
 # GPSTk library install target
-install( TARGETS gpstk DESTINATION "${CMAKE_INSTALL_LIBDIR}" EXPORT "${PROJECT_NAME}Config" )
+install( TARGETS gpstk DESTINATION "${CMAKE_INSTALL_LIBDIR}" EXPORT "${EXPORT_TARGETS_FILENAME}" )
 
-# GPSTk header file install target \todo without "/gpstk"?
+# GPSTk header file install target
 install( FILES ${GPSTK_INC_FILES} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gpstk" )
 
 #============================================================
 # Testing
 #============================================================
 
-# CMake command enable_testing() enables capability 
-# to use CMake add_test() command for this directory and below. 
-# This adds another build target, which is "test" for 
-# Makefile generators, or "RUN_TESTS" for IDEs (e.g. Visual Studio).
-# From that point on, you can use the ADD_TEST() command 
-# to add tests cases to the project build target test:
-#
-#     add_test( testname Exename arg1 arg2 ... )
-#
-# Must call enable_test() prior to any add_subdirectory() 
-# that is intended to contain test cases.
-
 if( TEST_SWITCH )
   enable_testing()
-  list( APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules )
+#  include( CTest )
 endif( )
 
 #----------------------------------------
@@ -174,22 +154,29 @@ add_subdirectory( core )
 if( BUILD_EXT )
    add_subdirectory( ext )
    add_subdirectory( examples )
+   if( BUILD_PYTHON )
+       include( PythonSetup.cmake )
+       add_subdirectory( swig )
+   endif()
 endif()
 	
-if( BUILD_PYTHON )
-   add_subdirectory( swig )
-endif()
 
 #----------------------------------------
 # Export the project import cmake files.
 #----------------------------------------
-
-configure_file( "${CMAKE_SOURCE_DIR}/ProjectConfig-misc.cmake.in" "${CMAKE_BINARY_DIR}/${PROJECT_NAME}Config-misc.cmake" )
-# \todo make smth with it
-#install( FILES "${CMAKE_BINARY_DIR}/${PROJECT_NAME}Config-misc.cmake" DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}" )
-#install( EXPORT "${PROJECT_NAME}Config" DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}" )
-
-#============================================================
-# The End
-#============================================================
-
+#include( CMakePackageConfigHelpers )
+#set( INSTALL_CONFIG_DIR ${CMAKE_INSTALL_DATADIR}/cmake/GPSTK)
+#configure_package_config_file( ${CMAKE_CURRENT_SOURCE_DIR}/GPSTKConfig.cmake.in
+#    ${CMAKE_CURRENT_BINARY_DIR}/GPSTKConfig.cmake
+#    INSTALL_DESTINATION ${INSTALL_CONFIG_DIR}
+#    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_BINDIR CMAKE_INSTALL_PREFIX INSTALL_CONFIG_DIR )
+#write_basic_package_version_file( ${CMAKE_CURRENT_BINARY_DIR}/GPSTKConfigVersion.cmake
+#    VERSION ${GPSTK_VERSION}
+#    COMPATIBILITY ExactVersion )
+#install( FILES
+#    ${CMAKE_CURRENT_BINARY_DIR}/GPSTKConfig.cmake
+#    ${CMAKE_CURRENT_BINARY_DIR}/GPSTKConfigVersion.cmake
+#    DESTINATION
+#    ${INSTALL_CONFIG_DIR} )
+#
+#install( EXPORT ${EXPORT_TARGETS_FILENAME} DESTINATION ${INSTALL_CONFIG_DIR} )

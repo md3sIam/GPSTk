@@ -66,6 +66,7 @@ using namespace StringUtils;
    // --------------------------------------------------------------------------------
    // used to mark optional input
    const Matrix<double> SRINullMatrix;
+   const SparseMatrix<double> SRINullSparseMatrix;
 
    //---------------------------------------------------------------------------------
    // constructor given the dimension N.
@@ -364,7 +365,7 @@ using namespace StringUtils;
          }
 
          // append to names at the end, and to R Z, zero filling
-         const int I(names.size());
+         const size_t I(names.size());
          *this += S.names;
 
          // just in case...to avoid overflow in loop below
@@ -495,7 +496,7 @@ using namespace StringUtils;
    // Zero out all the first n rows of R and elements of Z, removing all
    // information about those elements. Default value of the input is 0,
    // meaning zero out the entire SRI.
-   void SRI::zeroAll(const int n)
+   void SRI::zeroAll(const unsigned int n)
       throw()
    {
       if(n <= 0) {
@@ -507,7 +508,7 @@ using namespace StringUtils;
       if(n >= int(R.rows()))
          return;
 
-      for(int i=0; i<n; i++) {
+      for(unsigned int i=0; i<n; i++) {
          for(unsigned int j=i; j<R.cols(); j++) 
             R(i,j) = 0.0;
          Z(i) = 0.0;
@@ -840,7 +841,7 @@ using namespace StringUtils;
       }
 
       try {
-         Matrix<double> InvCov = inverse(Cov);
+         Matrix<double> InvCov = inverseLUD(Cov);
          addAPrioriInformation(InvCov, X);
       }
       catch(MatrixException& me) {
@@ -865,9 +866,8 @@ using namespace StringUtils;
       }
 
       try {
-         Cholesky<double> Ch;
-         Ch(InvCov);
-         Matrix<double> apR(transpose(Ch.L));  // R = UT(inv(Cov))
+         Matrix<double> L(lowerCholesky(InvCov));
+         Matrix<double> apR(transpose(L));     // R = UT(inv(Cov))
          Vector<double> apZ(apR*X);            // Z = R*X
          SrifMU(R, Z, apR, apZ);
       }
@@ -935,21 +935,22 @@ using namespace StringUtils;
       try {
          double small,big;
          Matrix<double> invR(inverseUT(R,&small,&big));
+         if(ptrSmall) *ptrSmall = small;
+         if(ptrBig) *ptrBig = big;
+
          //cout << " small is " << scientific << setprecision(3) << small
-         //   << " and exponent is " << ::log(big) - ::log(small) << endl;
+         //   << " and big is " << big;
+         //cout << " exponent is " << ::log(big) - ::log(small) << endl;
          // how best to test?
          //  ::log(big) - ::log(small) + 1 >= numeric_limits<double>::max_exponent
-         if(small <= 10*numeric_limits<double>::epsilon())
-         {
+         if(small <= 10*numeric_limits<double>::epsilon()) {
             MatrixException me("Singular matrix: condition number is "
                   + asString<double>(big) + " / " + asString<double>(small));
             GPSTK_THROW(me);
          }
+
          C = UTtimesTranspose(invR);
          X = invR * Z;
-
-         if(ptrSmall) *ptrSmall = small;
-         if(ptrBig) *ptrBig = big;
       }
       catch(MatrixException& me) {
          GPSTK_RETHROW(me);

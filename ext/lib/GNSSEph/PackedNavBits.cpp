@@ -55,7 +55,9 @@ namespace gpstk
    PackedNavBits::PackedNavBits()
                  : transmitTime(CommonTime::BEGINNING_OF_TIME),
                    bits(900),
-                   bits_used(0)
+                   bits_used(0),
+                   rxID(""),
+                   xMitCoerced(false)
    {
       transmitTime.setTimeSystem(TimeSystem::GPS);
    }
@@ -63,18 +65,38 @@ namespace gpstk
                                 const ObsID& obsIDArg,
                                 const CommonTime& transmitTimeArg)
                                 : bits(900),
-                                  bits_used(0)
+                                  bits_used(0),
+                                  rxID(""),
+                                  xMitCoerced(false)
    {
       satSys = satSysArg;
       obsID = obsIDArg;
       transmitTime = transmitTimeArg;
+      xMitCoerced = false;
+   }
+
+   PackedNavBits::PackedNavBits(const SatID& satSysArg, 
+                                const ObsID& obsIDArg,
+                                const std::string rxString,
+                                const CommonTime& transmitTimeArg)
+                                : bits(900),
+                                  bits_used(0),
+                                  rxID(""),
+                                  xMitCoerced(false)
+   {
+      satSys = satSysArg;
+      obsID = obsIDArg;
+      rxID = rxString;
+      transmitTime = transmitTimeArg;
+      xMitCoerced = false;
    }
 
       // Copy constructor
    PackedNavBits::PackedNavBits(const PackedNavBits& right)
    {
       satSys = right.satSys; 
-      obsID = right.obsID;
+      obsID  = right.obsID;
+      rxID   = right.rxID;
       transmitTime = right.transmitTime;
       bits_used = right.bits_used;
       bits.resize(bits_used);
@@ -82,6 +104,7 @@ namespace gpstk
       {
          bits[i] = right.bits[i];
       }
+      xMitCoerced = right.xMitCoerced;
    }
  
    /*
@@ -117,6 +140,12 @@ namespace gpstk
       obsID = obsIDArg;
       return;
    }
+   
+   void PackedNavBits::setRxID(const std::string rxString)
+   {
+      rxID = rxString; 
+      return; 
+   }
 
    void PackedNavBits::setTime(const CommonTime& TransmitTimeArg)
    {
@@ -139,7 +168,12 @@ namespace gpstk
    {
       return(satSys);
    }
-
+   
+   std::string PackedNavBits::getRxID() const
+   {
+      return(rxID); 
+   } 
+   
    CommonTime PackedNavBits::getTransmitTime() const
    {
       return(transmitTime);
@@ -215,7 +249,49 @@ namespace gpstk
    {
       double drad = asSignedDouble( startBits, numBits, power2);
       return (drad*PI);
-   };
+   }
+
+      //----
+        /*  Unpack a sign/mag long */ 
+   long PackedNavBits::asSignMagLong(const int startBit, 
+                                     const int numBits, 
+                                     const int scale) const
+   {
+         // Get the magnitude
+      int startBitMag = startBit + 1;
+      int numBitsMag = numBits - 1; 
+      unsigned long mag = asUnsignedLong(startBitMag, numBitsMag, scale);
+
+         // Get the sign bit
+      uint64_t uint = asUint64_t( startBit, 1 );
+
+      long smag = (long) mag;
+      if (uint==1) smag *= -1;
+      return smag; 
+   }
+                  
+         /* Unpack a sign/mag double */
+   double PackedNavBits::asSignMagDouble( const int startBit, 
+                             const int numBits, 
+                             const int power2) const
+   {
+      long smag = asSignMagLong(startBit, numBits, 1);  
+      
+         // Convert to double and scale
+      double dval = (double) smag;
+      dval *= pow(static_cast<double>(2), power2);
+      return( dval );
+   }
+                             
+         /* Unpack a sign/mag double with units of semi-circles */
+   double PackedNavBits::asSignMagDoubleSemiCircles( const int startBit, 
+                                  const int numBits, 
+                                  const int power2) const
+   {
+      double drad = asSignMagDouble( startBit, numBits, power2);
+      return (drad*PI);
+   }
+
 
    std::string PackedNavBits::asString(const int startBit, const int numChars) const 
    {
@@ -231,7 +307,6 @@ namespace gpstk
       }
       return(out);
    }
-
 
       /* Unpack a split unsigned long integer */ 
    unsigned long PackedNavBits::asUnsignedLong(const unsigned startBits[],
@@ -485,7 +560,7 @@ namespace gpstk
       bits_used += right.bits_used;
       bits.resize(bits_used);
       
-      for (int i=0;i<bits_used;i++)
+      for (int i=0;i<right.bits_used;i++)
       {
          bits[i+old_bits_used] = right.bits[i];
       }
@@ -555,7 +630,10 @@ namespace gpstk
         << "SatID: " << setw(4) << getsatSys() << endl
         << endl
         << "Carrier: " << ObsID::cbDesc[obsID.band] << "      "
-        << "Code: " << ObsID::tcDesc[obsID.code] << endl << endl
+        << "Code: " << ObsID::tcDesc[obsID.code] << endl;
+      if (rxID.size()>0) 
+         s << " RxID: " << rxID << endl;
+      s << endl
         << "Number Of Bits: " << dec << getNumBits() << endl
         << endl;
   
@@ -630,7 +708,7 @@ namespace gpstk
       word <<= 32 - numBitInWord;
       if (numBitInWord>0)
       {
-         s << "  0x" << setw(8) << setfill('0') << hex << word;
+         s << delimiter << " 0x" << setw(8) << setfill('0') << hex << word;
       }
       s.flags(oldFlags);      // Reset whatever conditions pertained on entry
       return(bits.size()); 
@@ -747,7 +825,6 @@ namespace gpstk
 
       return;
    }
-
 
    ostream& operator<<(ostream& s, const PackedNavBits& pnb)
    {

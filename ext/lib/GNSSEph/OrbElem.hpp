@@ -52,6 +52,7 @@
 #ifndef GPSTK_ORBELEM_HPP
 #define GPSTK_ORBELEM_HPP
 
+#include "OrbElemBase.hpp"
 #include "ObsID.hpp"
 #include "Exception.hpp"
 #include "CommonTime.hpp"
@@ -65,7 +66,7 @@
 
 namespace gpstk
 {
-   class OrbElem
+   class OrbElem : public OrbElemBase
    {
    public:
          /// Constructors
@@ -102,6 +103,10 @@ namespace gpstk
       virtual std::string getName() const = 0;
 
       virtual std::string getNameLong() const = 0;
+
+      virtual bool isSameData(const OrbElem* right) const;
+
+      virtual std::list<std::string> compare(const OrbElem* right) const;
 
          /** This function returns the health status of the SV.
           * @throw Invalid Request if the required data has not been stored.
@@ -173,12 +178,12 @@ namespace gpstk
 	 throw( InvalidRequest );
 
          /// Overhead information
-         //@{
-      bool    dataLoadedFlag;  /**< True if data is present, False otherwise */
-      SatID   satID;	       /**< Define satellite system and specific SV */
-      ObsID   obsID;           /**< Defines carrier and tracking code */
-      CommonTime ctToe;        /**< Orbit epoch in commontime format */
-      bool    healthy;         /**< SV health (healthy=true, other=false */
+         //@{ // Moved to OrbElemBase
+      //bool    dataLoadedFlag;  /**< True if data is present, False otherwise */
+      //SatID   satID;	       /**< Define satellite system and specific SV */
+      //ObsID   obsID;           /**< Defines carrier and tracking code */
+      //CommonTime ctToe;        /**< Orbit epoch in commontime format */
+      //bool    healthy;         /**< SV health (healthy=true, other=false */
               //@}
 
 	 /// Harmonic perturbations
@@ -229,8 +234,8 @@ namespace gpstk
          // and endValid are derived.
 
          //@{
-      CommonTime beginValid;    /**< Time at beginning of validity */
-      CommonTime endValid;      /**< Time at end of fit validity */
+      //CommonTime beginValid;    /**< Time at beginning of validity */
+      //CommonTime endValid;      /**< Time at end of fit validity */
 
 
 

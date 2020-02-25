@@ -64,6 +64,12 @@ namespace gpstk
          GPSTK_THROW(e);
       }
 
+      Xvt retVal = svXvtOverrideFit(epoch);
+      return retVal;
+   }
+
+   Xvt GloEphemeris::svXvtOverrideFit(const CommonTime& epoch) const
+   {
          // Values to be returned will be stored here
       Xvt sv;
 
@@ -410,9 +416,9 @@ namespace gpstk
 
          // Get the Julian Day at 0 hours UT (jd)
       YDSTime ytime( time );
-      double year( ytime.year );
+      double year( static_cast<double>(ytime.year) );
       int doy( ytime.doy );
-      int temp( floor(365.25 * (year - 1.0)) + doy );
+      int temp( static_cast<int>(floor(365.25 * (year - 1.0))) + doy );
 
       double jd( static_cast<double>(temp)+ 1721409.5 );
 
