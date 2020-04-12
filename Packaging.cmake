@@ -77,4 +77,8 @@ set(CPACK_DEB_COMPONENT_INSTALL ON)
 # Prevents unstripped-binary-or-object Lintian errors.
 #SET(CPACK_STRIP_FILES "1")
 
+<<<<<<< HEAD
 include( CPack )
+=======
+include( CPack )
+>>>>>>> 1deb76be11733098b410b0c5cc5f39e1715fe9fd
